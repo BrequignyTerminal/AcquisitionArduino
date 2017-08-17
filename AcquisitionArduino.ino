@@ -5,34 +5,29 @@
 #include "DHT.h"
 
 // Pins declaration
-#define red_pin   10
-#define green_pin 9
-#define blue_pin  8
-#define dht_pin   7
+#define red_pin    10
+#define green_pin  9
+#define blue_pin   8
+#define dht_pin    7
 
 #define relay1_pin 6
 #define relay2_pin 5
 
 // Clock declaration
-#define kSclkPin  4  // Serial Clock
-#define kIoPin    3  // Input/Output
-#define kCePin    2  // Chip Enable
+#define kSclk_pin  4  // Serial Clock
+#define kIo_pin    3  // Input/Output
+#define kCe_pin    2  // Chip Enable
 
 // Temp. and Hum. sensor type
-#define dht_type  DHT11
-
-// LCD definition
-#define LCD_Cols  16
-#define LCD_Rows  2
+#define dht_type   DHT11
 
 // Communication definition
 #define RS232_Speed 9600
 
 // Sensor definition
-#define Luminosity_Threshold 65.0
-
-// Command definition
-String g_command = "";
+#define Luminosity_Threshold    65.0
+#define HighTemperatureTreshold 24.0
+#define LowTemperatureTreshold  18.0
 
 // Acquisition definition
 bool g_temperatureAcquisition = false;
@@ -40,23 +35,41 @@ bool g_humidityAcquisition    = false;
 bool g_luminosityAcquisition  = false;
 bool g_timeAcquisition        = false;
 
+// LCD definition
+String g_LCD_Ref = "LCD1602";
+
+// LCD resolution
+int g_LCD_Cols = 16;
+int g_LCD_Rows = 2;
+
 DHT dht(dht_pin, dht_type);
-DS1302 rtc(kCePin, kIoPin, kSclkPin);
-LiquidCrystal_I2C lcd(0x27, LCD_Cols, LCD_Rows);
+DS1302 rtc(kCe_pin, kIo_pin, kSclk_pin);
+LiquidCrystal_I2C lcd(0x27, g_LCD_Cols, g_LCD_Rows);
 
 void setup()
 {
   String l_display = "";
+
+  if (g_LCD_Ref.equals("LCD1602"))
+  {
+    g_LCD_Cols = 16;
+    g_LCD_Rows = 2;
+  }
+  else if (g_LCD_Ref.equals("LCD2004"))
+  {
+    g_LCD_Cols = 20;
+    g_LCD_Rows = 4;
+  }
   
   // Coonfigure LCD
   lcd.init();
   lcd.backlight();
   lcd.clear();
   l_display = "Initialisation";
-  lcd.setCursor((LCD_Cols - l_display.length()) / 2, 0);
+  lcd.setCursor((g_LCD_Cols - l_display.length()) / 2, 0);
   lcd.print(l_display);
   l_display = "...";
-  lcd.setCursor((LCD_Cols - l_display.length()) / 2, 1);
+  lcd.setCursor((g_LCD_Cols - l_display.length()) / 2, 1);
   lcd.print(l_display);
 
   // Launch DHT sensor
@@ -92,17 +105,20 @@ void setup()
 
 void loop()
 {
+  // Command definition
+  String l_command = "";
+
   while (Serial.available() > 0)
   {
     delay(50);
-    char l_command = Serial.read();
-    g_command += (char)l_command;
+    char l_character = Serial.read();
+    l_command += (char)l_character;
   }
 
-  if (0 < g_command.length())
+  if (0 < l_command.length())
   {
-    launchCommand(g_command);
-    g_command = "";
+    launchCommand(l_command);
+    l_command = "";
   }
 
   if (g_temperatureAcquisition)
@@ -111,6 +127,7 @@ void loop()
   }
   else
   {
+    digitalWrite(relay2_pin, LOW);
     setLed(false, false, false);
   }
 
@@ -166,18 +183,21 @@ void setLed(bool p_red, bool p_green, bool p_blue)
   }
 }
 
-void sendTemperature(float p_temp)
+void sendTemperature(float p_temperature)
 {
-  if (p_temp < 18.0)
+  if (LowTemperatureTreshold > p_temperature)
   {
+    digitalWrite(relay2_pin, LOW);
     setLed(false, false, true);
   }
-  else if (p_temp > 24.0)
+  else if (HighTemperatureTreshold < p_temperature)
   {
+    digitalWrite(relay2_pin, HIGH);
     setLed(true, false, false);
   }
   else
   {
+    digitalWrite(relay2_pin, LOW);
     setLed(false, true, false);
   }
 }
@@ -208,15 +228,18 @@ void launchCommand(String p_command)
     Serial.println("L'appareil est allume !");
     Serial.println("Quel capteur activer ?");
     g_timeAcquisition = true;
+    lcd.setBacklight(255);
   }
   else if (l_serialCommand.equals("N"))
   {
     Serial.println("Tapez O pour allumer l'appreil !");
     g_temperatureAcquisition = false;
-    g_humidityAcquisition = false;
-    g_luminosityAcquisition = false;
-    g_timeAcquisition = false;
+    g_humidityAcquisition    = false;
+    g_luminosityAcquisition  = false;
+    g_timeAcquisition        = false;
     digitalWrite(relay1_pin, LOW);
+    digitalWrite(relay2_pin, LOW);
+    lcd.setBacklight(0);
   }
   else if (l_serialCommand.equals("HUMIDITY"))
   {
@@ -235,7 +258,7 @@ void launchCommand(String p_command)
     Serial.print(l_serialCommand);
     Serial.println(" command not take in account !");
 
-    if (LCD_Cols > l_serialCommand.length())
+    if (g_LCD_Cols > l_serialCommand.length())
     {
       lcd.setCursor(0, 0);
       lcd.print(l_serialCommand);
@@ -243,9 +266,9 @@ void launchCommand(String p_command)
     else
     {
       lcd.setCursor(0, 0);
-      lcd.print(l_serialCommand.substring(0, LCD_Cols));
+      lcd.print(l_serialCommand.substring(0, g_LCD_Cols));
       lcd.setCursor(0, 1);
-      lcd.print(l_serialCommand.substring(LCD_Cols, l_serialCommand.length()));
+      lcd.print(l_serialCommand.substring(g_LCD_Cols, l_serialCommand.length()));
     }
 
     delay(1000);
@@ -270,7 +293,7 @@ void manageHumidity()
 {
   float l_humidity = dht.readHumidity();
 
-  lcd.setCursor(0, 1);
+  lcd.setCursor(0, g_LCD_Rows - 1);
   lcd.print("H:");
   lcd.print((int)l_humidity);
   lcd.print("%");
@@ -281,7 +304,7 @@ void manageLuminosity()
   float light = analogRead(A0);
   float sensor_light = light / 1024 * 100;
 
-  lcd.setCursor(LCD_Cols / 2, 0);
+  lcd.setCursor(g_LCD_Cols / 2, 0);
   lcd.print("L:");
   lcd.print(sensor_light);
   lcd.print("%");
@@ -293,9 +316,9 @@ void manageTime()
 {
   Time t = rtc.getTime();
   // Nb characters for hour
-  int time_String_Size = 5;
+  int l_TimeStringSize = 5;
 
-  lcd.setCursor(LCD_Cols / 2 + (LCD_Cols / 2 - time_String_Size) / 2, 1);
+  lcd.setCursor(g_LCD_Cols / 2 + (g_LCD_Cols / 2 - l_TimeStringSize) / 2, g_LCD_Rows - 1);
   lcd.print(t.hour);
   lcd.print("H");
   lcd.print(t.min);
