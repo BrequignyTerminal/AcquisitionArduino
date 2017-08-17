@@ -49,17 +49,6 @@ LiquidCrystal_I2C lcd(0x27, g_LCD_Cols, g_LCD_Rows);
 void setup()
 {
   String l_display = "";
-
-  if (g_LCD_Ref.equals("LCD1602"))
-  {
-    g_LCD_Cols = 16;
-    g_LCD_Rows = 2;
-  }
-  else if (g_LCD_Ref.equals("LCD2004"))
-  {
-    g_LCD_Cols = 20;
-    g_LCD_Rows = 4;
-  }
   
   // Coonfigure LCD
   lcd.init();
