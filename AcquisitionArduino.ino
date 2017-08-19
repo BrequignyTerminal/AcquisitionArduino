@@ -4,31 +4,43 @@
 
 #include "DHT.h"
 
-struct arduino_date {
-  uint8_t  dd;
-  uint8_t  mm;
-  uint16_t yyyy;
+enum screen
+{
+  none    = 0x00,
+  LCD1602 = 0x01,
+  LCD2004 = 0x02
 };
 
-struct arduino_hour {
-  uint8_t hh;
-  uint8_t mm;
-  uint8_t ss;
-};
-
-struct lcd_resolution {
-  uint8_t cols;
-  uint8_t rows;
-};
-
-enum commandArduino {
+enum commandArduino
+{
   unknown     = 0x00,
   DATE        = 0x01,
   TIME        = 0x02,
   TEMPERATURE = 0x04,
   LUMINOSITY  = 0x08,
-  HUMIDITY    = 0x0A,
+  HUMIDITY    = 0x10,
   STARTSTOP   = 0xFF
+};
+
+struct arduino_date
+{
+  uint8_t  dd;
+  uint8_t  mm;
+  uint16_t yyyy;
+};
+
+struct arduino_hour
+{
+  uint8_t hh;
+  uint8_t mm;
+  uint8_t ss;
+};
+
+struct lcd_resolution
+{
+  screen  name;
+  uint8_t cols;
+  uint8_t rows;
 };
 
 // Pins declaration
@@ -66,10 +78,10 @@ bool g_displayHour            = false;
 commandArduino g_commandId = unknown;
 
 // LCD definition
-String g_LCD_Ref   = "LCD1602";
+screen g_LCD_Ref   = LCD2004;
 
 // LCD resolution
-lcd_resolution g_LCD_resolution = {16, 2};
+lcd_resolution g_LCD_resolution = {g_LCD_Ref, 20, 4};
 
 // Date hour declaration
 arduino_date g_date = {0, 0, 0};
@@ -89,10 +101,27 @@ void setup()
   lcd.backlight();
   lcd.clear();
   l_display = "Initialisation";
-  lcd.setCursor((g_LCD_resolution.cols - l_display.length()) / 2, 0);
+  
+  if(LCD1602 == g_LCD_resolution.name)
+  {
+    lcd.setCursor((g_LCD_resolution.cols - l_display.length()) / 2, 0);
+  }
+  else if(LCD2004 == g_LCD_resolution.name)
+  {
+    lcd.setCursor((g_LCD_resolution.cols - l_display.length()) / 2, 1);
+  }
+  
   lcd.print(l_display);
   l_display = "...";
-  lcd.setCursor((g_LCD_resolution.cols - l_display.length()) / 2, 1);
+  if(LCD1602 == g_LCD_resolution.name)
+  {
+    lcd.setCursor((g_LCD_resolution.cols - l_display.length()) / 2, 1);
+  }
+  else if(LCD2004 == g_LCD_resolution.name)
+  {
+    lcd.setCursor((g_LCD_resolution.cols - l_display.length()) / 2, 2);
+  }
+  
   lcd.print(l_display);
 
   // Launch DHT sensor
@@ -287,7 +316,7 @@ void launchCommand(String p_command)
   }
   else
   {
-    if(2 < g_commandId)
+    if(TIME < g_commandId)
     {
       g_commandId = unknown;
     }
@@ -378,8 +407,17 @@ void manageTemperature()
 {
   float l_temperature = dht.readTemperature();
 
-  lcd.setCursor(0, 0);
-  lcd.print("T:");
+  if(LCD1602 == g_LCD_resolution.name)
+  {
+    lcd.setCursor(0, 0);
+    lcd.print("T:");
+  }
+  else if(LCD2004 == g_LCD_resolution.name)
+  {
+    lcd.setCursor(2, 0);
+    lcd.print("Temperature: ");
+  }
+  
   lcd.print((int)l_temperature);
   lcd.print((char)223);
   lcd.print("C");
@@ -391,8 +429,17 @@ void manageHumidity()
 {
   float l_humidity = dht.readHumidity();
 
-  lcd.setCursor(0, g_LCD_resolution.rows - 1);
-  lcd.print("H:");
+  if(LCD1602 == g_LCD_resolution.name)
+  {
+    lcd.setCursor(0, g_LCD_resolution.rows - 1);
+    lcd.print("H:");
+  }
+  else if(LCD2004 == g_LCD_resolution.name)
+  {
+    lcd.setCursor(4, 1);
+    lcd.print("Humidity: ");
+  }
+  
   lcd.print((int)l_humidity);
   lcd.print("%");
 }
@@ -402,8 +449,17 @@ void manageLuminosity()
   float light = analogRead(A0);
   float sensor_light = light / 1024 * 100;
 
-  lcd.setCursor(g_LCD_resolution.cols / 2, 0);
-  lcd.print("L:");
+  if(LCD1602 == g_LCD_resolution.name)
+  {
+    lcd.setCursor(g_LCD_resolution.cols / 2, 0);
+    lcd.print("L:");
+  }
+  else if(LCD2004 == g_LCD_resolution.name)
+  {
+    lcd.setCursor(1, 2);
+    lcd.print("Luminosity: ");
+  }
+  
   lcd.print(sensor_light);
   lcd.print("%");
 
@@ -416,10 +472,36 @@ void displayHour()
   // Nb characters for hour
   uint8_t l_TimeStringSize = 5;
 
-  lcd.setCursor(g_LCD_resolution.cols / 2 + (g_LCD_resolution.cols / 2 - l_TimeStringSize) / 2, g_LCD_resolution.rows - 1);
-  lcd.print(t.hour);
+  if(LCD1602 == g_LCD_resolution.name)
+  {
+    lcd.setCursor(g_LCD_resolution.cols / 2 + (g_LCD_resolution.cols / 2 - l_TimeStringSize) / 2, g_LCD_resolution.rows - 1);
+  }
+  else if(LCD2004 == g_LCD_resolution.name)
+  {
+    lcd.setCursor(g_LCD_resolution.cols / 2 - 2, g_LCD_resolution.rows - 1);
+  }
+
+  if(10 > t.hour)
+  {
+    lcd.print("0");
+    lcd.print(t.hour);
+  }
+  else
+  {
+    lcd.print(t.hour);
+  }
+  
   lcd.print("H");
-  lcd.print(t.min);
+
+  if(10 > t.min)
+  {
+    lcd.print("0");
+    lcd.print(t.min);
+  }
+  else
+  {
+    lcd.print(t.min);
+  }
 }
 
 void sendTime(uint8_t p_hour, uint8_t p_minutes, uint8_t p_secondes)
