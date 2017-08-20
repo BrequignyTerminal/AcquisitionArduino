@@ -1,5 +1,6 @@
-#include <LiquidCrystal_I2C.h>
 #include <DS1302.h>
+#include <EEPROM.h>
+#include <LiquidCrystal_I2C.h>
 #include <Wire.h>
 
 #include "DHT.h"
@@ -19,6 +20,8 @@ enum commandArduino
   TEMPERATURE = 0x04,
   LUMINOSITY  = 0x08,
   HUMIDITY    = 0x10,
+  ROOM        = 0x11,
+  GETROOM     = 0x12,
   STARTSTOP   = 0xFF
 };
 
@@ -58,7 +61,7 @@ struct lcd_resolution
 #define kCe_pin    2  // Chip Enable
 
 // Temp. and Hum. sensor type
-#define dht_type   DHT11
+#define dht_type   DHT22
 
 // Communication definition
 #define RS232_Speed 9600
@@ -68,11 +71,14 @@ struct lcd_resolution
 #define HighTemperatureTreshold 24.0
 #define LowTemperatureTreshold  18.0
 
+#define RoomStringLength  15
+
 // Acquisition definition
 bool g_temperatureAcquisition = false;
 bool g_humidityAcquisition    = false;
 bool g_luminosityAcquisition  = false;
 bool g_displayHour            = false;
+bool g_roomAcquisition        = false;
 
 // command Id
 commandArduino g_commandId = unknown;
@@ -194,6 +200,11 @@ void loop()
     digitalWrite(relay1_pin, LOW);
   }
 
+  if (g_roomAcquisition)
+  {
+    manageRoom();
+  }
+  
   if (g_displayHour)
   {
     displayHour();
@@ -277,7 +288,8 @@ void launchCommand(String p_command)
     g_commandId = STARTSTOP;
     Serial.println("L'appareil est allume !");
     Serial.println("Quel capteur activer ?");
-    g_displayHour = true;
+    g_displayHour     = true;
+    g_roomAcquisition = true;
     lcd.setBacklight(255);
   }
   else if (l_serialCommand.equals("N"))
@@ -288,6 +300,7 @@ void launchCommand(String p_command)
     g_humidityAcquisition    = false;
     g_luminosityAcquisition  = false;
     g_displayHour            = false;
+    g_roomAcquisition        = false;
     digitalWrite(relay1_pin, LOW);
     digitalWrite(relay2_pin, LOW);
     lcd.setBacklight(0);
@@ -304,67 +317,100 @@ void launchCommand(String p_command)
   {
     g_commandId = LUMINOSITY;
   }
-  else if (l_serialCommand.equals("TIME"))
+  else if (l_serialCommand.startsWith("TIME="))
   {
-    Serial.println("Quelle est l'heure ?");
     g_commandId = TIME;
+    l_serialCommand = l_serialCommand.substring(l_serialCommand.indexOf("=") + 1);
   }
-  else if (l_serialCommand.equals("DATE"))
+  else if (l_serialCommand.startsWith("DATE="))
   {
-    Serial.println("Quelle est la date ?");
     g_commandId = DATE;
+    l_serialCommand = l_serialCommand.substring(l_serialCommand.indexOf("=") + 1);
+  }
+  else if (l_serialCommand.startsWith("ROOM="))
+  {
+    g_commandId = ROOM;
+    l_serialCommand = l_serialCommand.substring(l_serialCommand.indexOf("=") + 1);
+  }
+  else if (l_serialCommand.equals("GETROOM"))
+  {
+    g_commandId = GETROOM;
   }
   else
   {
-    if(TIME < g_commandId)
-    {
-      g_commandId = unknown;
-    }
+    g_commandId = unknown;
   }
   
   switch(g_commandId)
   {
     case TIME:
-      if((uint8_t)2 == nbCaracterFound(l_serialCommand, char(32)))
+      if((uint8_t)1 == nbCaracterFound(l_serialCommand, char(32)))
       {
         g_hour.hh = l_serialCommand.substring(0, l_serialCommand.indexOf(" ")).toInt();
-        g_hour.mm = l_serialCommand.substring(l_serialCommand.indexOf(" "), l_serialCommand.lastIndexOf(" ")).toInt();
+        g_hour.mm = l_serialCommand.substring(l_serialCommand.indexOf(" ") + 1).toInt();
+        g_hour.ss = 0;
+      }
+      else if((uint8_t)2 == nbCaracterFound(l_serialCommand, char(32)))
+      {
+        g_hour.hh = l_serialCommand.substring(0, l_serialCommand.indexOf(" ")).toInt();
+        g_hour.mm = l_serialCommand.substring(l_serialCommand.indexOf(" ") + 1, l_serialCommand.lastIndexOf(" ")).toInt();
+        g_hour.ss = 0;
+      }
+      else if((uint8_t)1 == nbCaracterFound(l_serialCommand, char(47)))
+      {
+        g_hour.hh = l_serialCommand.substring(0, l_serialCommand.indexOf("/")).toInt();
+        g_hour.mm = l_serialCommand.substring(l_serialCommand.indexOf("/") + 1).toInt();
         g_hour.ss = 0;
       }
       else if((uint8_t)2 == nbCaracterFound(l_serialCommand, char(47)))
       {
         g_hour.hh = l_serialCommand.substring(0, l_serialCommand.indexOf("/")).toInt();
-        g_hour.mm = l_serialCommand.substring(l_serialCommand.indexOf("/"), l_serialCommand.lastIndexOf("/")).toInt();
+        g_hour.mm = l_serialCommand.substring(l_serialCommand.indexOf("/") + 1, l_serialCommand.lastIndexOf("/")).toInt();
+        g_hour.ss = 0;
+      }
+      else if((uint8_t)1 == nbCaracterFound(l_serialCommand, char(58)))
+      {
+        Serial.println(nbCaracterFound(l_serialCommand, char(58)));
+        g_hour.hh = l_serialCommand.substring(0, l_serialCommand.indexOf(":")).toInt();
+        g_hour.mm = l_serialCommand.substring(l_serialCommand.indexOf(":") + 1).toInt();
         g_hour.ss = 0;
       }
       else if((uint8_t)2 == nbCaracterFound(l_serialCommand, char(58)))
       {
         g_hour.hh = l_serialCommand.substring(0, l_serialCommand.indexOf(":")).toInt();
-        g_hour.mm = l_serialCommand.substring(l_serialCommand.indexOf(":"), l_serialCommand.lastIndexOf(":")).toInt();
+        g_hour.mm = l_serialCommand.substring(l_serialCommand.indexOf(":") + 1, l_serialCommand.lastIndexOf(":")).toInt();
         g_hour.ss = 0;
       }
       sendTime(g_hour.hh, g_hour.mm, g_hour.ss);
       break;
     case DATE:
+      Serial.println(l_serialCommand);
       if((uint8_t)2 == nbCaracterFound(l_serialCommand, char(32)))
       {
         g_date.dd = l_serialCommand.substring(0, l_serialCommand.indexOf(" ")).toInt();
-        g_date.mm = l_serialCommand.substring(l_serialCommand.indexOf(" "), l_serialCommand.lastIndexOf(" ")).toInt();
-        g_date.yyyy = l_serialCommand.substring(l_serialCommand.lastIndexOf(" ")).toInt();
+        g_date.mm = l_serialCommand.substring(l_serialCommand.indexOf(" ") + 1, l_serialCommand.lastIndexOf(" ")).toInt();
+        g_date.yyyy = l_serialCommand.substring(l_serialCommand.lastIndexOf(" ") + 1).toInt();
       }
       else if((uint8_t)2 == nbCaracterFound(l_serialCommand, char(47)))
       {
         g_date.dd = l_serialCommand.substring(0, l_serialCommand.indexOf("/")).toInt();
-        g_date.mm = l_serialCommand.substring(l_serialCommand.indexOf("/"), l_serialCommand.lastIndexOf("/")).toInt();
-        g_date.yyyy = l_serialCommand.substring(l_serialCommand.lastIndexOf("/")).toInt();
+        g_date.mm = l_serialCommand.substring(l_serialCommand.indexOf("/") + 1, l_serialCommand.lastIndexOf("/")).toInt();
+        g_date.yyyy = l_serialCommand.substring(l_serialCommand.lastIndexOf("/") + 1).toInt();
       }
       else if((uint8_t)2 == nbCaracterFound(l_serialCommand, char(58)))
       {
         g_date.dd = l_serialCommand.substring(0, l_serialCommand.indexOf(":")).toInt();
-        g_date.mm = l_serialCommand.substring(l_serialCommand.indexOf(":"), l_serialCommand.lastIndexOf(":")).toInt();
-        g_date.yyyy = l_serialCommand.substring(l_serialCommand.lastIndexOf(":")).toInt();
+        g_date.mm = l_serialCommand.substring(l_serialCommand.indexOf(":") + 1, l_serialCommand.lastIndexOf(":")).toInt();
+        g_date.yyyy = l_serialCommand.substring(l_serialCommand.lastIndexOf(":") + 1).toInt();
       }
       sendDate(g_date.dd, g_date.mm, g_date.yyyy);
+      break;
+    case ROOM:
+      setRoomToEEPROM(l_serialCommand);
+      break;
+    case GETROOM:
+      Serial.print("Room = ");
+      Serial.println(getRoomFromEEPROM(RoomStringLength));
       break;
     case TEMPERATURE:
       g_temperatureAcquisition = !g_temperatureAcquisition;
@@ -406,18 +452,19 @@ void launchCommand(String p_command)
 void manageTemperature()
 {
   float l_temperature = dht.readTemperature();
+  // Nb characters for temperature
+  uint8_t l_TemperatureStringSize = 6;
 
   if(LCD1602 == g_LCD_resolution.name)
   {
     lcd.setCursor(0, 0);
-    lcd.print("T:");
   }
   else if(LCD2004 == g_LCD_resolution.name)
   {
-    lcd.setCursor(2, 0);
-    lcd.print("Temperature: ");
+    lcd.setCursor((g_LCD_resolution.cols - l_TemperatureStringSize) / 4, 1);
   }
-  
+
+  lcd.print("T:");
   lcd.print((int)l_temperature);
   lcd.print((char)223);
   lcd.print("C");
@@ -428,18 +475,19 @@ void manageTemperature()
 void manageHumidity()
 {
   float l_humidity = dht.readHumidity();
+  // Nb characters for humidity
+  uint8_t l_HumidityStringSize = 6;
 
   if(LCD1602 == g_LCD_resolution.name)
   {
     lcd.setCursor(0, g_LCD_resolution.rows - 1);
-    lcd.print("H:");
   }
   else if(LCD2004 == g_LCD_resolution.name)
   {
-    lcd.setCursor(4, 1);
-    lcd.print("Humidity: ");
+    lcd.setCursor((g_LCD_resolution.cols - l_HumidityStringSize) / 4, 2);
   }
-  
+
+  lcd.print("H:");
   lcd.print((int)l_humidity);
   lcd.print("%");
 }
@@ -448,22 +496,35 @@ void manageLuminosity()
 {
   float light = analogRead(A0);
   float sensor_light = light / 1024 * 100;
+  // Nb characters for luminosity
+  uint8_t l_LuminosityStringSize = 8;
 
   if(LCD1602 == g_LCD_resolution.name)
   {
     lcd.setCursor(g_LCD_resolution.cols / 2, 0);
-    lcd.print("L:");
   }
   else if(LCD2004 == g_LCD_resolution.name)
   {
-    lcd.setCursor(1, 2);
-    lcd.print("Luminosity: ");
+    lcd.setCursor(g_LCD_resolution.cols / 2 + (g_LCD_resolution.cols / 2 - l_LuminosityStringSize) / 2, 2);
   }
-  
+
+  lcd.print("L:");
   lcd.print(sensor_light);
   lcd.print("%");
 
   sendLuminosity(sensor_light);
+}
+
+void manageRoom()
+{
+  String l_room = getRoomFromEEPROM(RoomStringLength);
+  
+  if(LCD2004 == g_LCD_resolution.name)
+  {
+    lcd.setCursor((g_LCD_resolution.cols - l_room.length()) / 2, 0);
+  }
+  
+  lcd.print(l_room);
 }
 
 void displayHour()
@@ -548,5 +609,34 @@ uint8_t nbCaracterFound(String p_chaine, char p_subString)
   } while(i < p_chaine.length());
   
   return l_researchCharacter;
+}
+
+void setRoomToEEPROM(String p_chaine)
+{
+  uint8_t i = 0;
+  
+  for(; i < p_chaine.length(); ++i)
+  {
+    EEPROM.write(i, p_chaine.charAt(i));
+  }
+  for(i; i < RoomStringLength; ++i)
+  {
+    EEPROM.write(i, 0);
+  }
+}
+
+String getRoomFromEEPROM(uint8_t p_chaineLength)
+{
+  String l_returnValue = "";
+
+  for(uint8_t i = 0; i < p_chaineLength; ++i)
+  {
+    if(0 < EEPROM.read(i))
+    {
+      l_returnValue.concat((char)EEPROM.read(i));
+    }
+  }
+
+  return l_returnValue;
 }
 
