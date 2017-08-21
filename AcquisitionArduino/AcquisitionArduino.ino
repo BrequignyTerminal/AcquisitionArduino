@@ -20,9 +20,20 @@ enum commandArduino
   TEMPERATURE = 0x04,
   LUMINOSITY  = 0x08,
   HUMIDITY    = 0x10,
-  ROOM        = 0x11,
-  GETROOM     = 0x12,
+  ROOM        = 0x20,
+  GETROOM     = 0x40,
   STARTSTOP   = 0xFF
+};
+
+enum displayMemory
+{
+  noMemory          = 0x00,
+  DATEMEMORY        = 0x01,
+  TIMEMEMORY        = 0x02,
+  TEMPERATUREMEMORY = 0x04,
+  LUMINOSITYMEMORY  = 0x08,
+  HUMIDITYMEMORY    = 0x10,
+  ROOMMEMORY        = 0x20
 };
 
 struct arduino_date
@@ -73,18 +84,12 @@ struct lcd_resolution
 
 #define RoomStringLength  15
 
-// Acquisition definition
-bool g_temperatureAcquisition = false;
-bool g_humidityAcquisition    = false;
-bool g_luminosityAcquisition  = false;
-bool g_displayHour            = false;
-bool g_roomAcquisition        = false;
-
 // command Id
 commandArduino g_commandId = unknown;
+displayMemory  g_displayMemory = noMemory;
 
 // LCD definition
-screen g_LCD_Ref   = LCD2004;
+screen g_LCD_Ref = LCD2004;
 
 // LCD resolution
 lcd_resolution g_LCD_resolution = {g_LCD_Ref, 20, 4};
@@ -119,6 +124,7 @@ void setup()
   
   lcd.print(l_display);
   l_display = "...";
+  
   if(LCD1602 == g_LCD_resolution.name)
   {
     lcd.setCursor((g_LCD_resolution.cols - l_display.length()) / 2, 1);
@@ -176,7 +182,7 @@ void loop()
     l_command = "";
   }
 
-  if (g_temperatureAcquisition)
+  if (1 == EEPROM.read(TEMPERATUREMEMORY))
   {
     manageTemperature();
   }
@@ -186,12 +192,12 @@ void loop()
     setLed(false, false, false);
   }
 
-  if (g_humidityAcquisition)
+  if (1 == EEPROM.read(HUMIDITYMEMORY))
   {
     manageHumidity();
   }
 
-  if (g_luminosityAcquisition)
+  if (1 == EEPROM.read(LUMINOSITYMEMORY))
   {
     manageLuminosity();
   }
@@ -200,12 +206,12 @@ void loop()
     digitalWrite(relay1_pin, LOW);
   }
 
-  if (g_roomAcquisition)
+  if (1 == EEPROM.read(ROOMMEMORY))
   {
     manageRoom();
   }
   
-  if (g_displayHour)
+  if (1 == EEPROM.read(TIMEMEMORY))
   {
     displayHour();
   }
@@ -287,20 +293,20 @@ void launchCommand(String p_command)
   {
     g_commandId = STARTSTOP;
     Serial.println("L'appareil est allume !");
-    Serial.println("Quel capteur activer ?");
-    g_displayHour     = true;
-    g_roomAcquisition = true;
+    Serial.println("Quelle commande envoyer ?");
+    EEPROM.write(TIMEMEMORY, 1);
+    EEPROM.write(ROOMMEMORY, 1);
     lcd.setBacklight(255);
   }
   else if (l_serialCommand.equals("N"))
   {
     g_commandId = STARTSTOP;
     Serial.println("Tapez O pour allumer l'appreil !");
-    g_temperatureAcquisition = false;
-    g_humidityAcquisition    = false;
-    g_luminosityAcquisition  = false;
-    g_displayHour            = false;
-    g_roomAcquisition        = false;
+    EEPROM.write(TEMPERATUREMEMORY, 0);
+    EEPROM.write(HUMIDITYMEMORY,    0);
+    EEPROM.write(LUMINOSITYMEMORY,  0);
+    EEPROM.write(TIMEMEMORY,        0);
+    EEPROM.write(ROOMMEMORY,        0);
     digitalWrite(relay1_pin, LOW);
     digitalWrite(relay2_pin, LOW);
     lcd.setBacklight(0);
@@ -370,7 +376,6 @@ void launchCommand(String p_command)
       }
       else if((uint8_t)1 == nbCaracterFound(l_serialCommand, char(58)))
       {
-        Serial.println(nbCaracterFound(l_serialCommand, char(58)));
         g_hour.hh = l_serialCommand.substring(0, l_serialCommand.indexOf(":")).toInt();
         g_hour.mm = l_serialCommand.substring(l_serialCommand.indexOf(":") + 1).toInt();
         g_hour.ss = 0;
@@ -384,7 +389,6 @@ void launchCommand(String p_command)
       sendTime(g_hour.hh, g_hour.mm, g_hour.ss);
       break;
     case DATE:
-      Serial.println(l_serialCommand);
       if((uint8_t)2 == nbCaracterFound(l_serialCommand, char(32)))
       {
         g_date.dd = l_serialCommand.substring(0, l_serialCommand.indexOf(" ")).toInt();
@@ -413,13 +417,13 @@ void launchCommand(String p_command)
       Serial.println(getRoomFromEEPROM(RoomStringLength));
       break;
     case TEMPERATURE:
-      g_temperatureAcquisition = !g_temperatureAcquisition;
+      EEPROM.write(TEMPERATUREMEMORY, (EEPROM.read(TEMPERATUREMEMORY) + 1) % 2);
       break;
     case HUMIDITY:
-      g_humidityAcquisition = !g_humidityAcquisition;
+      EEPROM.write(HUMIDITYMEMORY, (EEPROM.read(HUMIDITYMEMORY) + 1) % 2);
       break;
     case LUMINOSITY:
-      g_luminosityAcquisition = !g_luminosityAcquisition;
+      EEPROM.write(LUMINOSITYMEMORY, (EEPROM.read(LUMINOSITYMEMORY) + 1) % 2);
       break;
     case STARTSTOP:
       break;
