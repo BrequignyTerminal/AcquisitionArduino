@@ -1,39 +1,52 @@
 #include <DS1302.h>
 #include <EEPROM.h>
 #include <LiquidCrystal_I2C.h>
+#include <SoftwareSerial.h>
 #include <Wire.h>
 
 #include "DHT.h"
 
 enum screen
 {
-  none    = 0x00,
-  LCD1602 = 0x01,
-  LCD2004 = 0x02
+  noScreen    = 0x00,
+  LCD1602     = 0x01,
+  LCD2004     = 0x02
 };
 
 enum commandArduino
 {
-  unknown     = 0x00,
-  DATE        = 0x01,
-  TIME        = 0x02,
-  TEMPERATURE = 0x04,
-  LUMINOSITY  = 0x08,
-  HUMIDITY    = 0x10,
-  ROOM        = 0x20,
-  GETROOM     = 0x40,
-  STARTSTOP   = 0xFF
+  noCommand      = 0x00,
+
+  // LCD management
+  DATE           = 0x01,
+  TIME           = 0x02,
+  TEMPERATURE    = 0x04,
+  LUMINOSITY     = 0x08,
+  HUMIDITY       = 0x10,
+  ROOM           = 0x20,
+  GET_ROOM       = 0x40,
+
+  // HC 05/06 commands
+  HC_COMMAND     = 0x80,
+  GET_HC_COMMAND = 0x81,
+  HC_VERIF_COMM  = 0x82,
+  HC_VERSION     = 0x83,
+  HC_BAUD        = 0x84,
+  
+  STARTSTOP      = 0xFF
 };
 
 enum displayMemory
 {
-  noMemory          = 0x00,
-  DATEMEMORY        = 0x01,
-  TIMEMEMORY        = 0x02,
-  TEMPERATUREMEMORY = 0x04,
-  LUMINOSITYMEMORY  = 0x08,
-  HUMIDITYMEMORY    = 0x10,
-  ROOMMEMORY        = 0x20
+  noMemory           = 0x00,
+  DATE_MEMORY        = 0x01,
+  TIME_MEMORY        = 0x02,
+  TEMPERATURE_MEMORY = 0x04,
+  LUMINOSITY_MEMORY  = 0x08,
+  HUMIDITY_MEMORY    = 0x10,
+  ROOM_MEMORY        = 0x20,
+
+  ROOM_STRING_MEMORY = 0x40
 };
 
 struct arduino_date
@@ -58,6 +71,9 @@ struct lcd_resolution
 };
 
 // Pins declaration
+#define hc06_TX    13
+#define hc06_RX    12
+
 #define red_pin    10
 #define green_pin  9
 #define blue_pin   8
@@ -76,6 +92,7 @@ struct lcd_resolution
 
 // Communication definition
 #define RS232_Speed 9600
+#define HC06_Speed  9600
 
 // Sensor definition
 #define Luminosity_Threshold    65.0
@@ -83,9 +100,10 @@ struct lcd_resolution
 #define LowTemperatureTreshold  18.0
 
 #define RoomStringLength  15
+#define AcquisitionDelay  1000
 
 // command Id
-commandArduino g_commandId = unknown;
+commandArduino g_commandId = noCommand;
 displayMemory  g_displayMemory = noMemory;
 
 // LCD definition
@@ -101,6 +119,7 @@ arduino_hour g_hour = {0, 0, 0};
 DHT dht(dht_pin, dht_type);
 DS1302 rtc(kCe_pin, kIo_pin, kSclk_pin);
 LiquidCrystal_I2C lcd(0x27, g_LCD_resolution.cols, g_LCD_resolution.rows);
+SoftwareSerial hc06(hc06_RX, hc06_TX);
 
 void setup()
 {
@@ -149,6 +168,8 @@ void setup()
   pinMode(blue_pin,   OUTPUT);
   pinMode(relay1_pin, OUTPUT);
   pinMode(relay2_pin, OUTPUT);
+  pinMode(hc06_RX,    INPUT); 
+  pinMode(hc06_TX,    OUTPUT);  
 
   digitalWrite(red_pin,    LOW);
   digitalWrite(green_pin,  LOW);
@@ -158,8 +179,12 @@ void setup()
 
   // Configure Serial communication
   Serial.begin(RS232_Speed);
-  Serial.println("Tapez O pour allumer l'appareil, tapez N pour l'eteindre");
 
+  // HC06 configuration
+  hc06.begin(HC06_Speed);
+  
+  sendMessageToComm("Tapez O pour allumer l'appareil, tapez N pour l'eteindre");
+   
   delay(1000);
   lcd.clear();
 }
@@ -168,21 +193,33 @@ void loop()
 {
   // Command definition
   String l_command = "";
-
-  while (Serial.available() > 0)
+  
+  if(hc06.available())
   {
-    delay(50);
-    char l_character = Serial.read();
-    l_command += (char)l_character;
+    while (hc06.available() > 0)
+    {
+      char l_hcCharacter = hc06.read();
+      l_command += (char)l_hcCharacter;
+    }
   }
-
+  
+  if(Serial.available())
+  {
+    while (Serial.available() > 0)
+    {
+      delay(50);
+      char l_serialCharacter = Serial.read();
+      l_command += (char)l_serialCharacter;
+    }
+  }
+  
   if (0 < l_command.length())
   {
     launchCommand(l_command);
     l_command = "";
   }
 
-  if (1 == EEPROM.read(TEMPERATUREMEMORY))
+  if (1 == EEPROM.read(TEMPERATURE_MEMORY))
   {
     manageTemperature();
   }
@@ -192,12 +229,12 @@ void loop()
     setLed(false, false, false);
   }
 
-  if (1 == EEPROM.read(HUMIDITYMEMORY))
+  if (1 == EEPROM.read(HUMIDITY_MEMORY))
   {
     manageHumidity();
   }
 
-  if (1 == EEPROM.read(LUMINOSITYMEMORY))
+  if (1 == EEPROM.read(LUMINOSITY_MEMORY))
   {
     manageLuminosity();
   }
@@ -206,17 +243,17 @@ void loop()
     digitalWrite(relay1_pin, LOW);
   }
 
-  if (1 == EEPROM.read(ROOMMEMORY))
+  if (1 == EEPROM.read(ROOM_MEMORY))
   {
     manageRoom();
   }
   
-  if (1 == EEPROM.read(TIMEMEMORY))
+  if (1 == EEPROM.read(TIME_MEMORY))
   {
     displayHour();
   }
 
-  delay(2000);
+  delay(AcquisitionDelay);
 }
 
 void setLed(bool p_red, bool p_green, bool p_blue)
@@ -286,27 +323,30 @@ void launchCommand(String p_command)
 {
   String l_serialCommand = p_command;
   l_serialCommand.toUpperCase();
+  String l_commSerieCommand = "";
+  bool l_bytesSend = false;
 
   lcd.clear();
 
   if (l_serialCommand.equals("O"))
   {
     g_commandId = STARTSTOP;
-    Serial.println("L'appareil est allume !");
-    Serial.println("Quelle commande envoyer ?");
-    EEPROM.write(TIMEMEMORY, 1);
-    EEPROM.write(ROOMMEMORY, 1);
+
+    sendMessageToComm("L'appareil est allume !");
+    sendMessageToComm("Quelle commande envoyer ?");
+    EEPROM.write(TIME_MEMORY, 1);
+    EEPROM.write(ROOM_MEMORY, 1);
     lcd.setBacklight(255);
   }
   else if (l_serialCommand.equals("N"))
   {
     g_commandId = STARTSTOP;
-    Serial.println("Tapez O pour allumer l'appreil !");
-    EEPROM.write(TEMPERATUREMEMORY, 0);
-    EEPROM.write(HUMIDITYMEMORY,    0);
-    EEPROM.write(LUMINOSITYMEMORY,  0);
-    EEPROM.write(TIMEMEMORY,        0);
-    EEPROM.write(ROOMMEMORY,        0);
+    sendMessageToComm("Tapez O pour allumer l'appareil !");
+    EEPROM.write(TEMPERATURE_MEMORY, 0);
+    EEPROM.write(HUMIDITY_MEMORY,    0);
+    EEPROM.write(LUMINOSITY_MEMORY,  0);
+    EEPROM.write(TIME_MEMORY,        0);
+    EEPROM.write(ROOM_MEMORY,        0);
     digitalWrite(relay1_pin, LOW);
     digitalWrite(relay2_pin, LOW);
     lcd.setBacklight(0);
@@ -338,13 +378,33 @@ void launchCommand(String p_command)
     g_commandId = ROOM;
     l_serialCommand = l_serialCommand.substring(l_serialCommand.indexOf("=") + 1);
   }
-  else if (l_serialCommand.equals("GETROOM"))
+  else if (l_serialCommand.equals("GET_ROOM"))
   {
-    g_commandId = GETROOM;
+    g_commandId = GET_ROOM;
+  }
+  else if (l_serialCommand.equals("AT+VERSION"))
+  {
+    g_commandId = HC_VERSION;
+  }
+  else if (l_serialCommand.startsWith("AT+BAUD"))
+  {
+    g_commandId = HC_BAUD;
+  }
+  else if (l_serialCommand.startsWith("AT+"))
+  {
+    g_commandId = HC_COMMAND;
+  }
+  else if (l_serialCommand.equals("AT"))
+  {
+    g_commandId = HC_VERIF_COMM;
+  }
+  else if (l_serialCommand.startsWith("OK"))
+  {
+    g_commandId = GET_HC_COMMAND;
   }
   else
   {
-    g_commandId = unknown;
+    g_commandId = noCommand;
   }
   
   switch(g_commandId)
@@ -412,26 +472,49 @@ void launchCommand(String p_command)
     case ROOM:
       setRoomToEEPROM(l_serialCommand);
       break;
-    case GETROOM:
-      Serial.print("Room = ");
-      Serial.println(getRoomFromEEPROM(RoomStringLength));
+    case GET_ROOM:
+      sendMessageToComm(getRoomFromEEPROM(RoomStringLength));
       break;
     case TEMPERATURE:
-      EEPROM.write(TEMPERATUREMEMORY, (EEPROM.read(TEMPERATUREMEMORY) + 1) % 2);
+      EEPROM.write(TEMPERATURE_MEMORY, (EEPROM.read(TEMPERATURE_MEMORY) + 1) % 2);
       break;
     case HUMIDITY:
-      EEPROM.write(HUMIDITYMEMORY, (EEPROM.read(HUMIDITYMEMORY) + 1) % 2);
+      EEPROM.write(HUMIDITY_MEMORY, (EEPROM.read(HUMIDITY_MEMORY) + 1) % 2);
       break;
     case LUMINOSITY:
-      EEPROM.write(LUMINOSITYMEMORY, (EEPROM.read(LUMINOSITYMEMORY) + 1) % 2);
+      EEPROM.write(LUMINOSITY_MEMORY, (EEPROM.read(LUMINOSITY_MEMORY) + 1) % 2);
       break;
     case STARTSTOP:
       break;
+    case HC_COMMAND:
+      l_commSerieCommand = "HC_COMMAND = ";
+      l_commSerieCommand.concat(l_serialCommand);
+      l_bytesSend = sendToHCCommand(l_serialCommand);
+      l_commSerieCommand.concat(" - l_bytesSend = ");
+      l_commSerieCommand.concat((String)l_bytesSend);
+      sendMessageToComm(l_commSerieCommand);
+      break;
+    case GET_HC_COMMAND:
+      sendMessageToComm(l_serialCommand);
+      break;
+    case HC_VERIF_COMM:
+      hc06.write("AT");
+      break;
+    case HC_VERSION:
+      hc06.write("AT+VERSION");
+      break;
+    case HC_BAUD:
+      l_commSerieCommand = "AT+BAUD";
+      l_commSerieCommand.concat(l_serialCommand.charAt(l_serialCommand.length() - 1));
+      sendToHCCommand(l_commSerieCommand);
+      break;
     default:
-      Serial.print("g_commandId = ");
-      Serial.println(g_commandId);
-      Serial.print(l_serialCommand);
-      Serial.println(" command not take in account !");
+      l_commSerieCommand = "g_commandId = ";
+      l_commSerieCommand.concat((String)g_commandId);
+      sendMessageToComm(l_commSerieCommand);
+      l_commSerieCommand = l_serialCommand;
+      l_commSerieCommand.concat(" command not take in account !");
+      sendMessageToComm(l_commSerieCommand);
 
       if (g_LCD_resolution.cols > l_serialCommand.length())
       {
@@ -617,13 +700,14 @@ uint8_t nbCaracterFound(String p_chaine, char p_subString)
 
 void setRoomToEEPROM(String p_chaine)
 {
-  uint8_t i = 0;
-  
-  for(; i < p_chaine.length(); ++i)
+  uint8_t i = ROOM_STRING_MEMORY;
+  uint8_t j = 0;
+
+  for(; i < ROOM_STRING_MEMORY + p_chaine.length(); ++i, ++j)
   {
-    EEPROM.write(i, p_chaine.charAt(i));
+    EEPROM.write(i, p_chaine.charAt(j));
   }
-  for(i; i < RoomStringLength; ++i)
+  for(i; i < ROOM_STRING_MEMORY + RoomStringLength; ++i)
   {
     EEPROM.write(i, 0);
   }
@@ -633,7 +717,7 @@ String getRoomFromEEPROM(uint8_t p_chaineLength)
 {
   String l_returnValue = "";
 
-  for(uint8_t i = 0; i < p_chaineLength; ++i)
+  for(uint8_t i = ROOM_STRING_MEMORY; i < ROOM_STRING_MEMORY + p_chaineLength; ++i)
   {
     if(0 < EEPROM.read(i))
     {
@@ -642,5 +726,47 @@ String getRoomFromEEPROM(uint8_t p_chaineLength)
   }
 
   return l_returnValue;
+}
+
+bool sendToHCCommand(String p_command)
+{
+  bool l_errorSendValue = false;
+  bool l_returnValue = false;
+  int l_bytesSent = 0;
+  String l_command = "sendToHCCommand => p_command = ";
+  l_command.concat(p_command);
+  
+  sendMessageToComm(l_command);
+  
+  for(uint8_t i = 0; i < p_command.length(); ++i)
+  {
+    l_command = "sendToHCCommand => i = ";
+    l_command.concat(i);
+    l_command.concat(" => ");
+    l_command.concat((String)p_command.charAt(i));
+    
+    sendMessageToComm(l_command);
+    l_bytesSent = hc06.write(p_command.charAt(i));
+
+    if(0 < l_bytesSent)
+    {
+      l_returnValue |= true;
+    }
+    else
+    {
+      l_returnValue &= false;
+      l_errorSendValue = true;
+    }
+  }
+
+  l_returnValue &= !l_errorSendValue;
+
+  return l_returnValue;
+}
+
+void sendMessageToComm(String p_message)
+{
+  Serial.println(p_message);
+  hc06.println(p_message);
 }
 
